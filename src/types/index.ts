@@ -24,9 +24,18 @@ export interface HotStock extends Stock {
 }
 
 export interface AISummary {
-  marketSentiment: "利好" | "利空" | "中性";
-  keyPoints: string[];
-  investmentNote: string;
-  /** Populated only when API key is not configured */
+  title: string;
+  sentiment: string;
+  points: string[];
+  risks: string[];
+  news: AISummaryNewsItem[];
+  updatedAt?: string;
+  /** Populated only when API key is not configured or fallback used */
   mock?: boolean;
+}
+
+export interface AISummaryNewsItem {
+  title?: string;
+  source?: string;
+  link?: string;
 }

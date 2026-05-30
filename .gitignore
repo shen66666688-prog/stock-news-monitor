@@ -44,6 +44,5 @@ yarn-error.log*
 # vercel
 .vercel
 
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# generated
+/今日发帖文案.txt

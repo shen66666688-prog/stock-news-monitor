@@ -37,30 +37,30 @@ function NewsSkeleton() {
   );
 }
 
-/** Sentiment pill colours */
-const sentimentStyle: Record<
-  AISummary["marketSentiment"],
-  { bg: string; text: string; border: string; label: string }
-> = {
-  "利好": {
-    bg: "bg-green-50 dark:bg-green-950/30",
-    text: "text-green-700 dark:text-green-400",
-    border: "border-green-200 dark:border-green-800",
-    label: "📈 利好",
-  },
-  "利空": {
-    bg: "bg-red-50 dark:bg-red-950/30",
-    text: "text-red-700 dark:text-red-400",
-    border: "border-red-200 dark:border-red-800",
-    label: "📉 利空",
-  },
-  "中性": {
+/** Map a freeform sentiment string to colour classes */
+function getSentimentStyle(sentiment: string) {
+  const s = sentiment.toLowerCase();
+  if (s.includes("利好") || s.includes("positive") || s.includes("bullish"))
+    return {
+      bg: "bg-green-50 dark:bg-green-950/30",
+      text: "text-green-700 dark:text-green-400",
+      border: "border-green-200 dark:border-green-800",
+      label: `📈 ${sentiment}`,
+    };
+  if (s.includes("利空") || s.includes("negative") || s.includes("bearish"))
+    return {
+      bg: "bg-red-50 dark:bg-red-950/30",
+      text: "text-red-700 dark:text-red-400",
+      border: "border-red-200 dark:border-red-800",
+      label: `📉 ${sentiment}`,
+    };
+  return {
     bg: "bg-amber-50 dark:bg-amber-950/30",
     text: "text-amber-700 dark:text-amber-400",
     border: "border-amber-200 dark:border-amber-800",
-    label: "⚖️ 中性",
-  },
-};
+    label: `⚖️ ${sentiment}`,
+  };
+}
 
 /** Card shell shared by all AISummaryPanel states */
 function AICard({ children }: { children: React.ReactNode }) {
@@ -170,7 +170,7 @@ function AIError({ onRetry }: { onRetry: () => void }) {
 
 /** Data state — the real deal */
 function AIData({ summary }: { summary: AISummary }) {
-  const s = sentimentStyle[summary.marketSentiment];
+  const sent = getSentimentStyle(summary.sentiment);
 
   return (
     <AICard>
@@ -179,40 +179,63 @@ function AIData({ summary }: { summary: AISummary }) {
           🤖
         </div>
         <div className="min-w-0 flex-1">
-          {/* Header + Sentiment */}
-          <div className="flex items-center gap-2">
+          {/* Header row: title + sentiment */}
+          <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold text-indigo-800 dark:text-indigo-300">
-              AI 智能总结
+              {summary.title}
             </h3>
             <span
-              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${s.bg} ${s.text} ${s.border}`}
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${sent.bg} ${sent.text} ${sent.border}`}
             >
-              {s.label}
+              {sent.label}
             </span>
           </div>
 
           {/* Key Points */}
-          <ul className="mt-3 space-y-1.5">
-            {summary.keyPoints.map((point, i) => (
-              <li key={i} className="flex items-start gap-2">
-                <span className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400 dark:bg-indigo-500" />
-                <span className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
-                  {point}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {summary.points.length > 0 && (
+            <ul className="mt-3 space-y-1.5">
+              {summary.points.map((point, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400 dark:bg-indigo-500" />
+                  <span className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
+                    {point}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
 
-          {/* Investment Note */}
-          <div className="mt-3 rounded-lg border border-indigo-200/60 bg-white/60 px-3 py-2.5 dark:border-indigo-700/40 dark:bg-indigo-950/30">
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              💡 {summary.investmentNote}
+          {/* Risk warnings */}
+          {summary.risks.length > 0 && (
+            <div className="mt-3 rounded-lg border border-amber-200/60 bg-amber-50/60 px-3 py-2.5 dark:border-amber-700/40 dark:bg-amber-950/20">
+              <p className="mb-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                ⚠️ 风险提示
+              </p>
+              <ul className="space-y-1">
+                {summary.risks.map((risk, i) => (
+                  <li
+                    key={i}
+                    className="text-xs text-amber-800 dark:text-amber-300/80"
+                  >
+                    · {risk}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Generated time */}
+          {summary.updatedAt && (
+            <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+              由 DeepSeek AI 生成 ·{" "}
+              {new Date(summary.updatedAt).toLocaleString("zh-CN")} · 仅供参考，不构成投资建议
             </p>
-          </div>
-
-          <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-            由 DeepSeek AI 生成 · 仅供参考，不构成投资建议
-          </p>
+          )}
+          {!summary.updatedAt && (
+            <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+              由 DeepSeek AI 生成 · 仅供参考，不构成投资建议
+            </p>
+          )}
         </div>
       </div>
     </AICard>
