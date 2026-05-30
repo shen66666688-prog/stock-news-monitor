@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Stock } from "@/types";
 
 interface StockCardProps {
@@ -10,7 +11,10 @@ export default function StockCard({ stock }: StockCardProps) {
   const changeSign = isPositive ? "+" : "";
 
   return (
-    <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900">
+    <Link
+      href={`/stock/${stock.symbol}`}
+      className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900"
+    >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h3 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
@@ -34,6 +38,6 @@ export default function StockCard({ stock }: StockCardProps) {
           {stock.changePercent.toFixed(2)}%)
         </p>
       </div>
-    </div>
+    </Link>
   );
 }
