@@ -1,44 +1,123 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import SearchBar from "@/components/SearchBar";
 import StockCard from "@/components/StockCard";
-import { hotStocks } from "@/data/hotStocks";
 import type { Stock } from "@/types";
 
+// ---------------------------------------------------------------------------
+// Skeleton placeholder shown while hot stocks are loading
+// ---------------------------------------------------------------------------
+function StockCardSkeleton() {
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="h-4 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <div className="h-3 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+        </div>
+        <div className="h-3 w-20 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+      </div>
+      <div className="ml-4 space-y-2 text-right">
+        <div className="ml-auto h-5 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+        <div className="ml-auto h-4 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 export default function Home() {
+  // Hot stocks state
+  const [hotStocks, setHotStocks] = useState<Stock[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [hotError, setHotError] = useState("");
+
+  // Search state
   const [searchResult, setSearchResult] = useState<Stock | null>(null);
+  const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
 
-  const handleSearch = (query: string) => {
-    // 先在热门股票中查找
-    const found = hotStocks.find(
-      (s) => s.symbol.toUpperCase() === query.toUpperCase()
-    );
-    if (found) {
-      setSearchResult(found);
-      setSearchError("");
-    } else {
-      setSearchResult(null);
-      setSearchError(`未找到股票 "${query}"，请检查代码后重试`);
-    }
-  };
+  // -----------------------------------------------------------------------
+  // Fetch hot stocks on mount
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    let cancelled = false;
 
+    async function load() {
+      try {
+        setLoading(true);
+        setHotError("");
+        const res = await fetch("/api/stocks/hot");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) {
+          setHotStocks(data.stocks ?? []);
+        }
+      } catch (err) {
+        console.error("Failed to load hot stocks:", err);
+        if (!cancelled) {
+          setHotError("热门股票数据加载失败，请刷新页面重试");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  // -----------------------------------------------------------------------
+  // Search handler
+  // -----------------------------------------------------------------------
+  const handleSearch = useCallback(async (query: string) => {
+    setSearchError("");
+    setSearching(true);
+    try {
+      const res = await fetch(`/api/stocks/search?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setSearchResult(null);
+        setSearchError(data.error ?? "搜索失败");
+      } else {
+        setSearchResult(data.stock ?? null);
+      }
+    } catch {
+      setSearchResult(null);
+      setSearchError("搜索请求失败，请检查网络后重试");
+    } finally {
+      setSearching(false);
+    }
+  }, []);
+
+  // -----------------------------------------------------------------------
+  // Render
+  // -----------------------------------------------------------------------
   return (
     <>
       <Navbar />
 
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
-        {/* 搜索区域 */}
+        {/* ---- Search ---- */}
         <section className="mb-10">
           <h2 className="mb-3 text-xl font-bold text-zinc-900 dark:text-zinc-100">
             🔍 搜索股票
           </h2>
           <SearchBar onSearch={handleSearch} />
 
-          {/* 搜索结果 */}
-          {searchResult && (
+          {/* Searching indicator */}
+          {searching && (
+            <p className="mt-3 animate-pulse text-sm text-zinc-400">
+              正在搜索...
+            </p>
+          )}
+
+          {/* Search result */}
+          {!searching && searchResult && (
             <div className="mt-4 animate-in fade-in slide-in-from-top-2">
               <p className="mb-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
                 搜索结果:
@@ -46,31 +125,59 @@ export default function Home() {
               <StockCard stock={searchResult} />
             </div>
           )}
-          {searchError && (
+
+          {/* Search error */}
+          {!searching && searchError && (
             <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-400">
               {searchError}
             </p>
           )}
         </section>
 
-        {/* 热门股票 */}
+        {/* ---- Hot stocks ---- */}
         <section className="mb-10">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
               🔥 热门股票
             </h2>
             <span className="text-xs text-zinc-400 dark:text-zinc-500">
-              数据仅供参考
+              实时数据 · Yahoo Finance
             </span>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {hotStocks.map((stock) => (
-              <StockCard key={stock.symbol} stock={stock} />
-            ))}
-          </div>
+
+          {/* Loading skeleton */}
+          {loading && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <StockCardSkeleton key={i} />
+              ))}
+            </div>
+          )}
+
+          {/* Error */}
+          {!loading && hotError && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+              {hotError}
+              <button
+                onClick={() => window.location.reload()}
+                className="ml-2 underline underline-offset-2"
+              >
+                刷新
+              </button>
+            </div>
+          )}
+
+          {/* Data */}
+          {!loading && !hotError && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {hotStocks.map((stock) => (
+                <StockCard key={stock.symbol} stock={stock} />
+              ))}
+            </div>
+          )}
         </section>
 
-        {/* 即将推出的功能 */}
+        {/* ---- Coming soon ---- */}
         <section>
           <h2 className="mb-3 text-xl font-bold text-zinc-900 dark:text-zinc-100">
             🚀 即将推出
@@ -107,7 +214,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="border-t border-zinc-200 py-6 text-center text-xs text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">
-        Stock News Monitor — 数据仅供参考，不构成投资建议
+        Stock News Monitor — 数据来源 Yahoo Finance，仅供参考，不构成投资建议
       </footer>
     </>
   );
