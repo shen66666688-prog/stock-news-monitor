@@ -22,3 +22,11 @@ export interface HotStock extends Stock {
   reason?: string;
   newsCount: number;
 }
+
+export interface AISummary {
+  marketSentiment: "利好" | "利空" | "中性";
+  keyPoints: string[];
+  investmentNote: string;
+  /** Populated only when API key is not configured */
+  mock?: boolean;
+}
