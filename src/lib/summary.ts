@@ -1,6 +1,15 @@
 import OpenAI from "openai";
 import { fetchStockNews } from "./news";
 import type { AISummary } from "@/types";
+import {
+  buildSummaryPrompt,
+  validateSummary,
+  formatValidationResult,
+  createFactSheet,
+  createFact,
+  runWithRetry,
+} from "@/core";
+import type { ValidationResult, FactSheet } from "@/core";
 
 // ---------------------------------------------------------------------------
 // DeepSeek client (lazy init — won't throw if key is missing at import time)
@@ -34,29 +43,16 @@ const MOCK_SUMMARY: AISummary = {
 };
 
 // ---------------------------------------------------------------------------
-// Prompt template — asks for a richer structured response
+// Prompt template — delegates to V2 promptEngine
 // ---------------------------------------------------------------------------
 function buildPrompt(newsTitles: string[], sources: string[]): string {
-  const newsBlock = newsTitles
-    .map((t, i) => `${i + 1}. ${t}（来源：${sources[i] ?? "未知"}）`)
-    .join("\n");
-
-  return `你是一位华尔街资深投资分析师，拥有 20 年以上的金融市场经验。
-
-请基于以下与该股票相关的 5 条最新新闻标题及来源，进行专业的投资分析：
-
-${newsBlock}
-
-请严格以 JSON 格式输出，不要包含任何 Markdown 标记、代码块符号或额外说明文字。输出必须是一个合法的 JSON 对象，包含以下字段：
-
-1. title: 字符串，给这份分析一个简短的标题（例如"科技股回暖信号"），不超过 15 个中文字符。
-2. sentiment: 字符串，市场综合情绪，只能是 "利好"、"利空" 或 "中性" 之一。
-3. keyPoints: 字符串数组，固定 3 条最核心的投资要点提炼，每条不超过 30 个中文字符。
-4. risks: 字符串数组，提炼 1-3 条潜在风险或利空因素。如果新闻中没有明确风险，也请从专业角度推断。每条不超过 30 个中文字符。
-5. updatedAt: 字符串，当前 UTC 时间，格式为 ISO 8601（例如 "2026-05-30T12:00:00.000Z"）。
-
-示例输出格式：
-{"title":"科技股回暖信号","sentiment":"利好","keyPoints":["新产品发布超预期","机构普遍上调目标价","短期面临技术性回调压力"],"risks":["估值偏高存在回调风险","宏观经济不确定性仍在"],"updatedAt":"2026-05-30T12:00:00.000Z"}`;
+  return buildSummaryPrompt({
+    ticker: "",
+    newsTitles,
+    newsSources: sources,
+    // factSheet is not available at prompt-build time;
+    // it will be injected by generateSummaryV2 if data is available
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -143,12 +139,30 @@ function normalizeSummary(raw: any): AISummary {
 }
 
 // ---------------------------------------------------------------------------
+// Build a minimal FactSheet from news data for validation
+// ---------------------------------------------------------------------------
+function buildNewsFactSheet(symbol: string, newsTitles: string[], newsSources: string[]): FactSheet {
+  const facts = newsTitles.map((title, i) =>
+    createFact({
+      ticker: symbol,
+      fact: title,
+      value: title,
+      category: "market_event" as const,
+      source: newsSources[i] || "Yahoo Finance",
+    }),
+  );
+  return createFactSheet(symbol, facts);
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
  * Generate an AI-powered news summary for a stock symbol.
  * Gracefully falls back to a mock response when DEEPSEEK_API_KEY is not set.
+ *
+ * V2: Now includes validation metadata (v2 field) from the content control layer.
  */
 export async function generateSummary(symbol: string): Promise<AISummary> {
   // 1) Fetch news first
@@ -171,39 +185,92 @@ export async function generateSummary(symbol: string): Promise<AISummary> {
     return MOCK_SUMMARY;
   }
 
-  // 3) Call DeepSeek
+  // 3) Build fact sheet from news (V2: fact layer)
   const titles = news.map((n) => n.title);
   const sources = news.map((n) => n.source);
+  const newsFactSheet = buildNewsFactSheet(symbol, titles, sources);
+
+  // 4) Call DeepSeek with V3 retry pipeline
   const prompt = buildPrompt(titles, sources);
 
   try {
-    const completion = await client.chat.completions.create({
-      model: "deepseek-chat",
-      messages: [
-        {
-          role: "system",
-          content:
-            "你是一个专业的金融分析师。你的回答必须始终是严格的 JSON 格式，不包含任何其他文字。",
-        },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.3,
-      max_tokens: 800,
-    });
+    // ── V3: generate + validate + retry (up to 3 attempts) ──
+    const result = await runWithRetry(
+      // generateFn: call DeepSeek → parse → normalize
+      async () => {
+        const completion = await client.chat.completions.create({
+          model: "deepseek-chat",
+          messages: [
+            {
+              role: "system",
+              content:
+                "你是一个专业的金融分析师。你的回答必须始终是严格的 JSON 格式，不包含任何其他文字。禁止编造财务数字，不确定时写'未披露'。",
+            },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.3,
+          max_tokens: 800,
+        });
 
-    const raw = completion.choices[0]?.message?.content?.trim() ?? "";
+        const raw = completion.choices[0]?.message?.content?.trim() ?? "";
 
-    // Parse — handle potential markdown code fences
-    let jsonStr = raw;
-    const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenceMatch) {
-      jsonStr = fenceMatch[1].trim();
+        // Parse — handle potential markdown code fences
+        let jsonStr = raw;
+        const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (fenceMatch) {
+          jsonStr = fenceMatch[1].trim();
+        }
+
+        const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+
+        return {
+          summary: normalizeSummary(parsed),
+          rawJson: raw,
+        };
+      },
+      // validateFn: check against fact sheet
+      (output) => {
+        const validation = validateSummary(
+          {
+            title: output.summary.title,
+            sentiment: output.summary.sentiment,
+            points: output.summary.points,
+            risks: output.summary.risks,
+            rawJson: output.rawJson,
+          },
+          newsFactSheet,
+        );
+        return {
+          valid: validation.valid,
+          level: validation.level,
+          reason: validation.reason,
+        };
+      },
+      3,
+    );
+
+    // Log retry pipeline result
+    const emoji = result.status === "valid" ? "✅" : result.status === "warning" ? "⚠️" : "❌";
+    console.log(
+      `[V3 Pipeline] ${symbol}: ${emoji} ${result.status} (${result.attempts} attempt${result.attempts > 1 ? "s" : ""})`,
+    );
+    for (const a of result.attemptLog) {
+      if (a.reason) console.warn(`[V3 Pipeline] ${symbol} #${a.attempt}: ${a.status} — ${a.reason}`);
     }
 
-    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+    const summary = result.output.summary;
 
-    // Normalise through the robust cross-provider parser
-    return normalizeSummary(parsed);
+    // Attach V3 metadata
+    summary.v2 = {
+      validationPassed: result.status !== "reject_final",
+      factCount: newsFactSheet.facts.length,
+      warnings: result.status === "warning" || result.status === "reject_final"
+        ? result.attemptLog.filter((a) => a.reason).map((a) => a.reason!)
+        : [],
+      validatedAt: new Date().toISOString(),
+    };
+
+    return summary;
   } catch (error) {
     console.error("DeepSeek API call failed:", error);
     return {

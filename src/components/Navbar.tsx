@@ -17,6 +17,12 @@ export default function Navbar() {
           >
             热门股票
           </Link>
+          <Link
+            href="/dashboard"
+            className="transition-colors hover:text-zinc-900 dark:hover:text-zinc-100"
+          >
+            📊 验证面板
+          </Link>
           <span
             className="cursor-not-allowed text-zinc-300 dark:text-zinc-600"
             title="即将上线"

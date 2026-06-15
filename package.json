@@ -7,13 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "generate-posts": "node scripts/generate-posts.js"
+    "generate-posts": "node scripts/generate-posts.js",
+    "daily-report": "node scripts/dailyReportGenerator.js",
+    "daily-pipeline": "node scripts/dailyPipeline.js"
   },
   "dependencies": {
     "fs-extra": "^11.3.5",
     "next": "16.2.6",
     "openai": "^6.39.1",
     "p-limit": "^7.3.0",
+    "puppeteer": "^25.1.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "yahoo-finance2": "^3.14.3"
@@ -23,9 +26,13 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "canvas": "^3.2.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "pngjs": "^7.0.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tesseract.js": "^5.1.1",
+    "typescript": "^5",
+    "xlsx": "^0.18.5"
   }
 }

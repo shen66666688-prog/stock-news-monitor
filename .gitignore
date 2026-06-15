@@ -46,4 +46,14 @@ yarn-error.log*
 
 # generated
 /今日发帖文案.txt
-/posters/
+/covers/
+/output/
+
+# Tesseract OCR data (large binary files)
+*.traineddata
+
+# TypeScript build artifacts
+tsconfig.tsbuildinfo
+
+# local config overrides
+.claude/settings.local.json

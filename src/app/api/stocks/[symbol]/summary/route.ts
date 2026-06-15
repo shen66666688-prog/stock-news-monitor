@@ -36,7 +36,8 @@ export async function GET(
     const age = Date.now() - cached.timestamp;
     if (age < CACHE_TTL_MS) {
       console.log(`[Cache Hit] ${sym} (age: ${Math.round(age / 1000)}s)`);
-      return NextResponse.json({ symbol: sym, summary: cached.data });
+      const cachedV2 = cached.data.v2 || null;
+      return NextResponse.json({ symbol: sym, summary: cached.data, v2: cachedV2 });
     }
     // Expired — remove it
     summaryCache.delete(sym);
@@ -53,7 +54,17 @@ export async function GET(
       console.log(`[Cache Set] ${sym} (TTL: 10min)`);
     }
 
-    return NextResponse.json({ symbol: sym, summary });
+    // V2: Include content control layer validation metadata
+    const v2Meta = summary.v2
+      ? {
+          validationPassed: summary.v2.validationPassed,
+          factCount: summary.v2.factCount,
+          warnings: summary.v2.warnings,
+          validatedAt: summary.v2.validatedAt,
+        }
+      : null;
+
+    return NextResponse.json({ symbol: sym, summary, v2: v2Meta });
   } catch (error) {
     console.error(`/api/stocks/${sym}/summary error:`, error);
     return NextResponse.json(

@@ -8,12 +8,21 @@ const {
   formatDateStr,
   normalizeApiResponse,
 } = require("./post-utils");
+const { buildSlideSet, buildPremiumSlideSet } = require("./ctrOptimizer");
+const { renderSlideSet, closeBrowser, makeOutDirName } = require("./screenshotService");
+const { fetchDiagnosticData } = require("./dataFetcher");
 
 const TICKERS = ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "META"];
 const BASE_URL = process.env.LOCAL_BASE_URL || "http://localhost:3000";
 
+// ── Daily report integration ──────────────────────────────────────────
+const DAILY_REPORT_JSON_PATH = process.env.DAILY_REPORT_JSON || null;
+// ──────────────────────────────────────────────────────────────────────
+
 const OUT_TXT = path.join(process.cwd(), "今日发帖文案.txt");
-const OUT_POSTERS_DIR = path.join(process.cwd(), "posters");
+const OUT_COVERS_DIR = path.join(process.cwd(), "covers");
+const OUT_XHS_DIR = path.join(process.cwd(), "output", "xiaohongshu");
+const OUT_ZH_DIR = path.join(process.cwd(), "output", "zhihu");
 
 // ---------------------------------------------------------------------------
 // HTTP helper
@@ -255,44 +264,110 @@ function buildPosterHtml({ ticker, title, sentiment, points, risks, updatedAt })
   const limit = pLimit(3);
 
   // Ensure output directories
-  await fs.ensureDir(OUT_POSTERS_DIR);
+  await fs.ensureDir(OUT_COVERS_DIR);
+  await fs.ensureDir(OUT_XHS_DIR);
+  await fs.ensureDir(OUT_ZH_DIR);
+
+  // ── Daily Report Integration ───────────────────────────────────────
+  // MUST load BEFORE tasks execute — data flows into buildSlideSet()
+  let dailyReportData = null;
+  if (DAILY_REPORT_JSON_PATH) {
+    try {
+      dailyReportData = await fs.readJson(DAILY_REPORT_JSON_PATH);
+      console.log(`📋 已加载日报结构化数据: ${DAILY_REPORT_JSON_PATH}`);
+      if (dailyReportData.marketRiskEvents) {
+        console.log(`   风险事件: ${dailyReportData.marketRiskEvents.length} 条`);
+      }
+    } catch (e) {
+      console.warn(`⚠️ 无法加载日报数据: ${e.message}`);
+    }
+  }
+  // ────────────────────────────────────────────────────────────────────
 
   const tasks = TICKERS.map((ticker) =>
     limit(async () => {
-      const url = `${BASE_URL}/api/stocks/${ticker}/summary`;
-      try {
-        console.log(`Fetching: ${url}`);
-        const raw = await fetchJson(url);
-        const norm = normalizeApiResponse(raw);
-
-        const opts = {
+      // ── Fast path: daily report data = skip API, use structured data ──
+      let opts;
+      if (dailyReportData && dailyReportData.enrichedStockData?.[ticker]) {
+        const enriched = dailyReportData.enrichedStockData[ticker];
+        const monitoring = dailyReportData.stockMonitoring?.[ticker] || {};
+        console.log(`📋 ${ticker}: 使用日报结构化数据 (sentiment=${enriched.sentiment}, risk=${monitoring.riskLevel})`);
+        opts = {
           ticker,
-          title: norm.title,
-          sentiment: norm.sentiment,
-          points: norm.points,
-          risks: norm.risks,
-          updatedAt: norm.updatedAt,
+          title: `${ticker} 今日投研速览（日报增强）`,
+          sentiment: enriched.sentiment || "中性",
+          points: enriched.keyPoints || [],
+          risks: enriched.risks || [],
+          updatedAt: new Date().toISOString(),
+          // Daily report context
+          dailyRiskLevel: monitoring.riskLevel || null,
+          marketRiskEvents: dailyReportData.marketRiskEvents || [],
+          marketSummary: dailyReportData.marketSummary || {},
+          fromDailyReport: true,
         };
-
-        // 1) Text post
-        const text = buildViralPost(opts);
-
-        // 2) HTML poster
-        const html = buildPosterHtml(opts);
-        const posterPath = path.join(OUT_POSTERS_DIR, `${ticker}.html`);
-
-        // Collect for combined output
-        return { ticker, text, html, posterPath };
-      } catch (e) {
-        console.error(`❌ ${ticker} failed:`, e?.message || e);
-        return {
-          ticker,
-          text: `【${ticker}】❌ 拉取失败：${e?.message || e}\n（请检查本地服务是否运行 / 接口是否 200）\n`,
-          html: null,
-          posterPath: null,
-          error: true,
-        };
+      } else {
+        // ── Fallback: call API ──
+        const url = `${BASE_URL}/api/stocks/${ticker}/summary`;
+        try {
+          console.log(`Fetching: ${url}`);
+          const raw = await fetchJson(url);
+          const norm = normalizeApiResponse(raw);
+          opts = {
+            ticker,
+            title: norm.title,
+            sentiment: norm.sentiment,
+            points: norm.points,
+            risks: norm.risks,
+            updatedAt: norm.updatedAt,
+            fromDailyReport: false,
+          };
+        } catch (e) {
+          console.warn(`⚠️ ${ticker} API 不可用（服务器未运行？），使用最小数据生成`);
+          opts = {
+            ticker,
+            title: `${ticker} 今日投研速览`,
+            sentiment: "中性",
+            points: ["数据暂不可用，请启动 Next.js 服务后重试"],
+            risks: ["无法获取实时风险数据"],
+            updatedAt: new Date().toISOString(),
+            fromDailyReport: false,
+          };
+        }
       }
+
+      // 1) Text post with daily report annotation
+      let textAugment = "";
+      if (opts.fromDailyReport) {
+        textAugment = `\n📋 [日报风险等级] ${opts.dailyRiskLevel || "N/A"}`;
+      }
+      const text = buildViralPost(opts) + textAugment;
+
+      // 2) Fetch real market data for diagnostic dashboard
+      const metrics = await fetchDiagnosticData(ticker).catch(() => null);
+      if (metrics) {
+        console.log(`   📊 ${ticker} 实盘: $${metrics.price}  PE=${metrics.raw.pe.toFixed(1)}  vs50MA=${((metrics.price/metrics.ma50-1)*100).toFixed(1)}%`);
+      }
+
+      // 3) Build slide set — use premium template when metrics available
+      const slideOpts = { ...opts, metrics };
+      const slides = metrics
+        ? buildPremiumSlideSet(slideOpts)
+        : buildSlideSet(slideOpts);
+
+      return {
+        ticker,
+        text,
+        slides,
+        dailyReportTrace: opts.fromDailyReport
+          ? {
+              riskLevel: opts.dailyRiskLevel,
+              pointsCount: opts.points?.length || 0,
+              risksCount: opts.risks?.length || 0,
+              marketEventsCount: (opts.marketRiskEvents || []).length,
+              fromDailyReport: true,
+            }
+          : { fromDailyReport: false },
+      };
     })
   );
 
@@ -303,58 +378,36 @@ function buildPosterHtml({ ticker, title, sentiment, points, risks, updatedAt })
   await fs.writeFile(OUT_TXT, textBlocks.join("\n--------------------------------\n\n"), "utf8");
   console.log(`✅ 文案已生成：${OUT_TXT}`);
 
-  // Write individual HTML posters
-  let posterCount = 0;
+  // ── 4-slide cover PNGs ───────────────────────────────────────────
+  let coverCount = 0;
+  console.log("\n🎨 生成4图封面序列…");
   for (const r of results) {
-    if (r.html) {
-      await fs.writeFile(r.posterPath, r.html, "utf8");
-      console.log(`✅ 海报已生成：${r.posterPath}`);
-      posterCount++;
+    if (r.slides && !r.error) {
+      try {
+        const folderName = makeOutDirName(r.ticker);
+        const outDir = path.join(OUT_COVERS_DIR, folderName);
+        const slideResults = await renderSlideSet(r.ticker, r.slides, outDir);
+        for (const sr of slideResults) {
+          if (!sr.error) console.log(`✅ ${sr.name}  (${sr.sizeKB}KB)`);
+        }
+        // Write post_caption.txt alongside PNGs
+        if (r.slides.caption) {
+          const captionPath = path.join(outDir, "post_caption.txt");
+          await fs.writeFile(captionPath, r.slides.caption, "utf8");
+          console.log(`✅ post_caption.txt`);
+        }
+        console.log(`   📁 ${outDir}`);
+        coverCount++;
+      } catch (e) {
+        console.error(`❌ ${r.ticker} 封面失败: ${e.message}`);
+      }
     }
   }
 
-  // Write an index page to browse all posters
-  if (posterCount > 0) {
-    const links = results
-      .filter((r) => r.html)
-      .map((r) => `<li><a href="./${r.ticker}.html" style="color:var(--text);font-size:22px;">📊 ${r.ticker}</a></li>`)
-      .join("\n    ");
-    const indexHtml = `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>今日投研海报一览</title>
-<style>
-  :root{ --bg1:#0b1220; --bg2:#0f172a; --text:#e5e7eb; }
-  body{
-    margin:0; padding:48px;
-    font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", Arial;
-    color:var(--text);
-    background: radial-gradient(1000px 700px at 20% 10%, rgba(56,189,248,0.18), transparent 55%),
-                radial-gradient(800px 600px at 80% 20%, rgba(167,139,250,0.18), transparent 55%),
-                linear-gradient(180deg, var(--bg1), var(--bg2));
-    min-height:100vh;
-  }
-  h1{ font-size:36px; margin-bottom:32px; }
-  ul{ list-style:none; padding:0; display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:16px; }
-  li a{ display:block; padding:24px; border-radius:18px; border:1px solid rgba(255,255,255,0.10); background:rgba(255,255,255,0.05); text-decoration:none; transition:background 0.2s; }
-  li a:hover{ background:rgba(255,255,255,0.10); }
-</style>
-</head>
-<body>
-  <h1>📊 今日投研海报一览</h1>
-  <ul>
-    ${links}
-  </ul>
-</body>
-</html>`;
-    const indexPath = path.join(OUT_POSTERS_DIR, "index.html");
-    await fs.writeFile(indexPath, indexHtml, "utf8");
-    console.log(`✅ 海报索引：${indexPath}`);
-  }
+  await closeBrowser();
 
-  console.log(`\n🎉 全部完成：${results.length} 只股票，${posterCount} 张海报`);
+  console.log(`\n🎉 全部完成：${results.length} 只股票
+   🎨 4图封面：${coverCount} 套（每套4张）`);
 })().catch((err) => {
   console.error("❌ 生成失败：", err);
   process.exit(1);
