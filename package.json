@@ -9,9 +9,13 @@
     "lint": "eslint",
     "generate-posts": "node scripts/generate-posts.js",
     "daily-report": "node scripts/dailyReportGenerator.js",
-    "daily-pipeline": "node scripts/dailyPipeline.js"
+    "daily-pipeline": "node scripts/dailyPipeline.js",
+    "mcp": "npx tsx mcp-server/server.ts",
+    "mcp-http": "npx tsx mcp-server/server.ts --http --port 3456"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
     "fs-extra": "^11.3.5",
     "next": "16.2.6",
     "openai": "^6.39.1",
@@ -19,10 +23,12 @@
     "puppeteer": "^25.1.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "yahoo-finance2": "^3.14.3"
+    "yahoo-finance2": "^3.14.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/express": "^5.0.6",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

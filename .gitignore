@@ -57,3 +57,5 @@ tsconfig.tsbuildinfo
 
 # local config overrides
 .claude/settings.local.json
+
+.vercel
