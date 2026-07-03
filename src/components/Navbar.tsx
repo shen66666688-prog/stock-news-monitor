@@ -29,12 +29,12 @@ export default function Navbar() {
           >
             新闻监控
           </span>
-          <span
-            className="cursor-not-allowed text-zinc-300 dark:text-zinc-600"
-            title="即将上线"
+          <Link
+            href="/copilot"
+            className="transition-colors hover:text-zinc-900 dark:hover:text-zinc-100"
           >
-            AI 总结
-          </span>
+            🤖 Copilot
+          </Link>
         </nav>
       </div>
     </header>
