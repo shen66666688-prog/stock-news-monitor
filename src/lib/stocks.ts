@@ -1,20 +1,21 @@
 import YahooFinance from "yahoo-finance2";
 import type { Stock } from "@/types";
 
-// Patch Node http/https + fetch to use proxy (ikuuu/M78 local proxy)
-const PROXY_URL = process.env.HTTP_PROXY || "http://127.0.0.1:7897";
-try {
-  const { HttpsProxyAgent } = require("https-proxy-agent");
-  const http = require("http");
-  const https = require("https");
-  const agent = new HttpsProxyAgent(PROXY_URL);
-  http.globalAgent = agent;
-  https.globalAgent = agent;
-} catch {}
-try {
-  const { ProxyAgent, setGlobalDispatcher } = require("undici");
-  setGlobalDispatcher(new ProxyAgent(PROXY_URL));
-} catch {}
+// 仅在本地设置了 HTTP_PROXY 时才启用代理（Vercel 上不需要）
+if (process.env.HTTP_PROXY) {
+  try {
+    const { HttpsProxyAgent } = require("https-proxy-agent");
+    const http = require("http");
+    const https = require("https");
+    const agent = new HttpsProxyAgent(process.env.HTTP_PROXY);
+    http.globalAgent = agent;
+    https.globalAgent = agent;
+  } catch {}
+  try {
+    const { ProxyAgent, setGlobalDispatcher } = require("undici");
+    setGlobalDispatcher(new ProxyAgent(process.env.HTTP_PROXY));
+  } catch {}
+}
 
 // ---------------------------------------------------------------------------
 // Yahoo Finance v3 client (class-based, singleton)
