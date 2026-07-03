@@ -1,6 +1,21 @@
 import YahooFinance from "yahoo-finance2";
 import type { Stock } from "@/types";
 
+// Patch Node http/https + fetch to use proxy (ikuuu/M78 local proxy)
+const PROXY_URL = process.env.HTTP_PROXY || "http://127.0.0.1:7897";
+try {
+  const { HttpsProxyAgent } = require("https-proxy-agent");
+  const http = require("http");
+  const https = require("https");
+  const agent = new HttpsProxyAgent(PROXY_URL);
+  http.globalAgent = agent;
+  https.globalAgent = agent;
+} catch {}
+try {
+  const { ProxyAgent, setGlobalDispatcher } = require("undici");
+  setGlobalDispatcher(new ProxyAgent(PROXY_URL));
+} catch {}
+
 // ---------------------------------------------------------------------------
 // Yahoo Finance v3 client (class-based, singleton)
 // ---------------------------------------------------------------------------

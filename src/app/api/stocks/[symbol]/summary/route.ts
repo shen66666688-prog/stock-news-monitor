@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateSummary } from "@/lib/summary";
+import { trackCacheHit } from "@/lib/apiTracker";
+import { getPersistent, setPersistent } from "@/lib/persistentCache";
 import type { AISummary } from "@/types";
 
 export const dynamic = "force-dynamic";
 
 // ---------------------------------------------------------------------------
-// In-memory cache — prevents billing attacks & saves API quota
+// Two-layer cache: memory (fast) + disk (survives restart)
 // ---------------------------------------------------------------------------
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const MEMORY_TTL_MS = 10 * 60 * 1000; // 10 minutes in-memory
+const DISK_TTL_MS = 30 * 60 * 1000;   // 30 minutes on disk
 
 interface CacheEntry {
   data: AISummary;
@@ -15,6 +18,23 @@ interface CacheEntry {
 }
 
 const summaryCache = new Map<string, CacheEntry>();
+
+// Load persisted cache entries into memory on startup
+function warmCache(): void {
+  try {
+    const knownTickers = ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "META"];
+    for (const t of knownTickers) {
+      const data = getPersistent<AISummary>("summary", t);
+      if (data && !data.mock) {
+        summaryCache.set(t, { data, timestamp: Date.now() - 60000 }); // pretend 1min old
+      }
+    }
+    if (summaryCache.size > 0) {
+      console.log(`[PersistentCache] 从磁盘恢复了 ${summaryCache.size} 条缓存`);
+    }
+  } catch { /* ignore */ }
+}
+warmCache();
 
 // ---------------------------------------------------------------------------
 // Route handler
@@ -34,8 +54,9 @@ export async function GET(
   const cached = summaryCache.get(sym);
   if (cached) {
     const age = Date.now() - cached.timestamp;
-    if (age < CACHE_TTL_MS) {
+    if (age < MEMORY_TTL_MS) {
       console.log(`[Cache Hit] ${sym} (age: ${Math.round(age / 1000)}s)`);
+      trackCacheHit("deepseek");
       const cachedV2 = cached.data.v2 || null;
       return NextResponse.json({ symbol: sym, summary: cached.data, v2: cachedV2 });
     }
@@ -48,10 +69,12 @@ export async function GET(
   try {
     const summary = await generateSummary(sym);
 
-    // 3) Only cache real (non-mock) responses to avoid storing "no key" placeholders
+    // 3) Save to both memory + disk (survives restart, avoids re-calling DeepSeek)
     if (!summary.mock) {
-      summaryCache.set(sym, { data: summary, timestamp: Date.now() });
-      console.log(`[Cache Set] ${sym} (TTL: 10min)`);
+      const entry = { data: summary, timestamp: Date.now() };
+      summaryCache.set(sym, entry);
+      setPersistent("summary", sym, summary, DISK_TTL_MS);
+      console.log(`[Cache Set] ${sym} (memory:10min, disk:30min)`);
     }
 
     // V2: Include content control layer validation metadata

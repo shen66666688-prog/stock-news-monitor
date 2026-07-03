@@ -88,18 +88,28 @@ function scoreSpreadability(signal: NormalizedSignal): number {
   score += Math.min(8, numberCount * 2);
 
   // ── Personal stake ("你的持仓", "持有XX的人") ──
-  if (/你|持有|持仓|仓位|买入|卖出|抄底|减仓|观望/.test(text)) {
+  if (/你|持有|持仓|仓位|买入|卖出|抄底|减仓|观望|your|position|portfolio|buy|sell|hold|stake/i.test(text)) {
     score += 7;
   }
 
   // ── Curiosity gap / 悬念 ──
-  if (/为什么|到底|究竟|背后|真相|发生了什么|怎么办/.test(text)) {
+  if (/为什么|到底|究竟|背后|真相|发生了什么|怎么办|why|what happen|behind|secret|revealed/i.test(text)) {
     score += 5;
   }
 
   // ── Question format (问题式标题 CTR 更高) ──
   if (/\?|？/.test(signal.title)) {
     score += 3;
+  }
+
+  // ── Named entities / celebrity investors (Buffett, Burry, Musk etc) ──
+  if (/Burry|Buffett|Musk|Wood|Dalio|Ackman|Powell|Yellen|Dimon/i.test(text)) {
+    score += 6;
+  }
+
+  // ── Earnings / catalysts ──
+  if (/earnings|财报|revenue|收入|profit|利润|beat|miss|guidance|指引|IPO|launch/i.test(text)) {
+    score += 4;
   }
 
   // ── If the signal already has high engagement on social media ──
@@ -139,11 +149,11 @@ function scoreCapitalImpact(signal: NormalizedSignal): number {
   // ── Ticker tier (market cap / retail interest) ──
   const ticker = signal.primaryTicker.toUpperCase();
   if (HIGH_IMPACT_TICKERS.includes(ticker)) {
-    score += 12;
+    score += 18; // boosted — these ARE the market
   } else if (MEDIUM_IMPACT_TICKERS.includes(ticker)) {
-    score += 8;
+    score += 12;
   } else {
-    score += 4;
+    score += 6;
   }
 
   // ── Magnitude of impact ──

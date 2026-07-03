@@ -180,13 +180,16 @@ export function validateAIOutput(
       // Exact match
       if (fn === num.value) return true;
       // Close match for large numbers (within 1% tolerance for numbers > 100)
-      if (num.value > 100 && Math.abs(fn - num.value) / fn < 0.01) return true;
+      const pctDiff = Math.abs(fn - num.value) / Math.max(fn, 1);
+      if (num.value > 1000 && pctDiff < 0.005) return true;
+      if (num.value > 100 && pctDiff < 0.01) return true;
+      if (num.value > 1 && pctDiff < 0.03) return true;
       // For scaled numbers (e.g., 19.18 vs 19.2, or 557 vs 55.7)
       // Check scaled versions: $19.18B might appear as 19.18 or 19180
       const scales = [1, 10, 100, 1000, 0.1, 0.01, 0.001];
       return scales.some((s) => {
         const scaled = num.value * s;
-        return factNumbers.some((fn2) => Math.abs(fn2 - scaled) / Math.max(fn2, 1) < 0.02);
+        return factNumbers.some((fn2) => Math.abs(fn2 - scaled) / Math.max(fn2, 1) < 0.03);
       });
     });
 

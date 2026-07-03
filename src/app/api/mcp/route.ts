@@ -13,6 +13,21 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { z } from "zod";
 import YahooFinance from "yahoo-finance2";
 
+// Patch Node http/https + fetch to use proxy
+const PROXY_URL = process.env.HTTP_PROXY || "http://127.0.0.1:7897";
+try {
+  const { HttpsProxyAgent } = require("https-proxy-agent");
+  const http = require("http");
+  const https = require("https");
+  const agent = new HttpsProxyAgent(PROXY_URL);
+  http.globalAgent = agent;
+  https.globalAgent = agent;
+} catch {}
+try {
+  const { ProxyAgent, setGlobalDispatcher } = require("undici");
+  setGlobalDispatcher(new ProxyAgent(PROXY_URL));
+} catch {}
+
 // ═══════════════════════════════════════════════════════════════
 // FactLayer + Validator — 内联（避免跨文件编译问题）
 // ═══════════════════════════════════════════════════════════════

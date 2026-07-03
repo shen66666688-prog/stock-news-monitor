@@ -50,7 +50,8 @@ function normalizeApiResponse(raw) {
     ? summary.risks.map(String).filter(Boolean)
     : [];
   const updatedAt = summary?.updatedAt ? String(summary.updatedAt) : undefined;
-  return { title, sentiment, points, risks, updatedAt };
+  const hook = summary?.hook ? String(summary.hook) : undefined;
+  return { title, sentiment, points, risks, updatedAt, hook };
 }
 
 module.exports = {

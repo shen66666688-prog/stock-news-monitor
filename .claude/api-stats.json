@@ -1,0 +1,32 @@
+{
+  "yahoo_search": {
+    "calls": 9,
+    "success": 9,
+    "failed": 0,
+    "cacheHits": 0
+  },
+  "yahoo_chart": {
+    "calls": 0,
+    "success": 0,
+    "failed": 0,
+    "cacheHits": 0
+  },
+  "yahoo_html": {
+    "calls": 0,
+    "success": 0,
+    "failed": 0,
+    "cacheHits": 0
+  },
+  "deepseek": {
+    "calls": 9,
+    "success": 9,
+    "failed": 0,
+    "cacheHits": 0
+  },
+  "article_scrape": {
+    "calls": 0,
+    "success": 0,
+    "failed": 0,
+    "cacheHits": 0
+  }
+}

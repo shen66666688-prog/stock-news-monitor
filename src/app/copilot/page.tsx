@@ -389,7 +389,7 @@ export default function CopilotPage() {
               {rewriteData && <DetailBlock title="✍️ 安全改写" data={rewriteData} renderSpecial={(d) => (
                 <div className="mt-2 rounded-lg bg-white/60 p-3 text-sm dark:bg-zinc-900/60">
                   <p className="text-zinc-700 dark:text-zinc-300">{String(d.rewritten || "—")}</p>
-                  {d.addedDisclaimer && <p className="mt-2 text-xs text-blue-600">📝 {String(d.addedDisclaimer)}</p>}
+                  {(d.addedDisclaimer as string) && <p className="mt-2 text-xs text-blue-600">📝 {String(d.addedDisclaimer)}</p>}
                 </div>
               )} />}
             </div>

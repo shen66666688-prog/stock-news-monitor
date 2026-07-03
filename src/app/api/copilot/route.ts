@@ -293,7 +293,7 @@ async function handlePublishReady(client: OpenAI, model: string, content: string
   let rewritten = content;
   try {
     const r3 = await handleRewriteSafeRaw(client, model, content);
-    rewritten = r3.rewritten || content;
+    rewritten = String(r3.rewritten || "") || content;
     steps.push({ label: "安全改写", status: "done", data: r3 });
   } catch (e) {
     steps.push({ label: "安全改写", status: "error", data: { error: (e as Error).message } });

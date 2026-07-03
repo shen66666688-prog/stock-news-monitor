@@ -10,6 +10,8 @@ import {
   runWithRetry,
 } from "@/core";
 import type { ValidationResult, FactSheet } from "@/core";
+import { fetchArticleText, fetchFundamentals } from "./articleScraper";
+import { trackCall, trackSuccess, trackFail } from "./apiTracker";
 
 // ---------------------------------------------------------------------------
 // DeepSeek client (lazy init — won't throw if key is missing at import time)
@@ -43,15 +45,15 @@ const MOCK_SUMMARY: AISummary = {
 };
 
 // ---------------------------------------------------------------------------
-// Prompt template — delegates to V2 promptEngine
+// Prompt template — delegates to V2 promptEngine, now with article content
 // ---------------------------------------------------------------------------
-function buildPrompt(newsTitles: string[], sources: string[]): string {
+function buildPrompt(newsTitles: string[], sources: string[], articleContents?: string[], fundamentals?: Record<string, string> | null): string {
   return buildSummaryPrompt({
     ticker: "",
     newsTitles,
     newsSources: sources,
-    // factSheet is not available at prompt-build time;
-    // it will be injected by generateSummaryV2 if data is available
+    articleContents: articleContents || newsTitles,
+    fundamentals: fundamentals || undefined,
   });
 }
 
@@ -126,6 +128,7 @@ function normalizeSummary(raw: any): AISummary {
       );
   })();
 
+  const hook = pick("hook") as string | undefined;
   const updatedAt = pick("updatedAt", "time", "timestamp", "generatedAt");
 
   return {
@@ -135,22 +138,138 @@ function normalizeSummary(raw: any): AISummary {
     risks: risks.slice(0, 3),
     news,
     updatedAt: typeof updatedAt === "string" ? updatedAt : undefined,
+    hook: typeof hook === "string" ? hook : undefined,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Build a minimal FactSheet from news data for validation
+// Build FactSheet from news data + fundamentals for validation
 // ---------------------------------------------------------------------------
-function buildNewsFactSheet(symbol: string, newsTitles: string[], newsSources: string[]): FactSheet {
-  const facts = newsTitles.map((title, i) =>
-    createFact({
+function buildNewsFactSheet(
+  symbol: string,
+  newsTitles: string[],
+  newsSources: string[],
+  fundamentals?: Record<string, string> | null,
+  articleContents?: string[],
+): FactSheet {
+  const facts: ReturnType<typeof createFact>[] = [];
+
+  // 1) Article titles as market_event facts (string values)
+  for (let i = 0; i < newsTitles.length; i++) {
+    facts.push(createFact({
       ticker: symbol,
-      fact: title,
-      value: title,
+      fact: newsTitles[i],
+      value: newsTitles[i],
       category: "market_event" as const,
       source: newsSources[i] || "Yahoo Finance",
-    }),
-  );
+    }));
+  }
+
+  // 2) Article content snippets (first 300 chars per article for validator matching)
+  if (articleContents) {
+    for (let i = 0; i < articleContents.length; i++) {
+      const snippet = articleContents[i]?.slice(0, 300);
+      if (snippet && snippet.length > 50) {
+        facts.push(createFact({
+          ticker: symbol,
+          fact: `[Article ${i + 1}] ${snippet}`,
+          value: snippet,
+          category: "market_event" as const,
+          source: newsSources[i] || "Yahoo Finance",
+        }));
+      }
+    }
+  }
+
+  // 2) Fundamentals as NUMERIC facts (so validator's extractNumbers can match them)
+  if (fundamentals) {
+    // Parse price
+    const priceRaw = fundamentals.price;
+    if (priceRaw) {
+      const price = parseFloat(priceRaw);
+      if (!isNaN(price) && price > 0) {
+        facts.push(createFact({
+          ticker: symbol,
+          fact: `${symbol} 最新股价: $${price.toFixed(2)}`,
+          value: price,
+          category: "price",
+          source: "Yahoo Finance",
+        }));
+      }
+    }
+
+    // Parse PE
+    const peRaw = fundamentals.pe;
+    if (peRaw) {
+      const pe = parseFloat(peRaw);
+      if (!isNaN(pe) && pe > 0) {
+        facts.push(createFact({
+          ticker: symbol,
+          fact: `${symbol} 静态PE (TTM): ${pe.toFixed(1)}x`,
+          value: pe,
+          category: "valuation",
+          source: "Yahoo Finance",
+        }));
+      }
+    }
+
+    // Parse market cap (handles "4.533T" / "453.3B" formats)
+    const mcRaw = fundamentals.marketCap;
+    if (mcRaw) {
+      let mc: number | null = null;
+      const mcClean = mcRaw.trim().toUpperCase();
+      if (mcClean.endsWith("T")) {
+        mc = parseFloat(mcClean) * 1e12;
+      } else if (mcClean.endsWith("B")) {
+        mc = parseFloat(mcClean) * 1e9;
+      } else if (mcClean.endsWith("M")) {
+        mc = parseFloat(mcClean) * 1e6;
+      } else {
+        mc = parseFloat(mcClean.replace(/,/g, ""));
+      }
+      if (mc !== null && !isNaN(mc) && mc > 0) {
+        const capStr = mc >= 1e12
+          ? `$${(mc / 1e12).toFixed(2)}T`
+          : `$${(mc / 1e9).toFixed(1)}B`;
+        facts.push(createFact({
+          ticker: symbol,
+          fact: `${symbol} 市值: ${capStr}`,
+          value: mc,
+          category: "market_cap",
+          source: "Yahoo Finance",
+        }));
+      }
+    }
+
+    // Parse 52-week range ("201.50 - 317.40")
+    const rangeRaw = fundamentals.range52w;
+    if (rangeRaw) {
+      const parts = rangeRaw.split(/[-–—]/);
+      if (parts.length === 2) {
+        const lo = parseFloat(parts[0].trim());
+        const hi = parseFloat(parts[1].trim());
+        if (!isNaN(lo) && lo > 0) {
+          facts.push(createFact({
+            ticker: symbol,
+            fact: `${symbol} 52周最低价: $${lo.toFixed(2)}`,
+            value: lo,
+            category: "price",
+            source: "Yahoo Finance",
+          }));
+        }
+        if (!isNaN(hi) && hi > 0) {
+          facts.push(createFact({
+            ticker: symbol,
+            fact: `${symbol} 52周最高价: $${hi.toFixed(2)}`,
+            value: hi,
+            category: "price",
+            source: "Yahoo Finance",
+          }));
+        }
+      }
+    }
+  }
+
   return createFactSheet(symbol, facts);
 }
 
@@ -178,20 +297,47 @@ export async function generateSummary(symbol: string): Promise<AISummary> {
     };
   }
 
-  // 2) Check for API key
+  // 2) Scrape article content for top 3 news (so AI has real text, not just titles)
+  console.log(`[ArticleScraper] ${symbol}: fetching content for top news…`);
+  const enrichedNews = await Promise.all(
+    news.slice(0, 3).map(async (n) => {
+      if (n.url) {
+        const text = fetchArticleText(n.url);
+        return { ...n, contentSnippet: text };
+      }
+      return { ...n, contentSnippet: null };
+    })
+  );
+  // Log what we got
+  for (const en of enrichedNews) {
+    const len = en.contentSnippet?.length || 0;
+    console.log(`  📰 ${en.title.slice(0, 50)}… → ${len} chars`);
+  }
+
+  // 3) Check for API key
   const client = getDeepSeekClient();
   if (!client) {
     console.warn("DEEPSEEK_API_KEY not configured — returning mock summary");
     return MOCK_SUMMARY;
   }
 
-  // 3) Build fact sheet from news (V2: fact layer)
-  const titles = news.map((n) => n.title);
-  const sources = news.map((n) => n.source);
-  const newsFactSheet = buildNewsFactSheet(symbol, titles, sources);
+  // 4) Fetch fundamentals (price, PE, market cap from Yahoo quote page)
+  console.log(`[Fundamentals] ${symbol}: fetching…`);
+  const fundamentals = fetchFundamentals(symbol);
+  if (fundamentals && Object.keys(fundamentals).length > 0) {
+    console.log(`  💰 ${symbol}: price=${fundamentals.price || "N/A"} PE=${fundamentals.pe || "N/A"}`);
+  }
 
-  // 4) Call DeepSeek with V3 retry pipeline
-  const prompt = buildPrompt(titles, sources);
+  // 5) Build fact sheet from enriched news + fundamentals (WITH numeric values)
+  const titles = enrichedNews.map((n) => n.title);
+  const sources = enrichedNews.map((n) => n.source);
+  const articleContents = enrichedNews.map((n) => n.contentSnippet || n.title);
+
+  const newsFactSheet = buildNewsFactSheet(symbol, titles, sources, fundamentals, articleContents);
+
+  // 6) Call DeepSeek with V3 retry pipeline — real articles + fundamentals
+  trackCall("deepseek");
+  const prompt = buildPrompt(titles, sources, articleContents, fundamentals);
 
   try {
     // ── V3: generate + validate + retry (up to 3 attempts) ──
@@ -270,8 +416,10 @@ export async function generateSummary(symbol: string): Promise<AISummary> {
       validatedAt: new Date().toISOString(),
     };
 
+    trackSuccess("deepseek");
     return summary;
   } catch (error) {
+    trackFail("deepseek", String(error));
     console.error("DeepSeek API call failed:", error);
     return {
       title: "AI 分析暂不可用",

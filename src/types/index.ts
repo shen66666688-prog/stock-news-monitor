@@ -16,6 +16,7 @@ export interface NewsItem {
   url: string;
   sentiment?: "positive" | "negative" | "neutral";
   relatedStocks: string[];
+  contentSnippet?: string | null;
 }
 
 export interface HotStock extends Stock {
@@ -30,6 +31,8 @@ export interface AISummary {
   risks: string[];
   news: AISummaryNewsItem[];
   updatedAt?: string;
+  /** V3: AI-generated hook line for social media */
+  hook?: string;
   /** Populated only when API key is not configured or fallback used */
   mock?: boolean;
   /** V2 validation metadata — added by the content control layer */

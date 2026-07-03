@@ -52,7 +52,9 @@ export interface SummaryPromptInput {
   ticker: string;
   newsTitles: string[];
   newsSources: string[];
+  articleContents?: string[];
   factSheet?: FactSheet;
+  fundamentals?: Record<string, string>;
 }
 
 export interface AnalysisPromptInput {
@@ -86,11 +88,32 @@ export interface PostPromptInput {
  * without fabricating numbers.
  */
 export function buildSummaryPrompt(input: SummaryPromptInput): string {
-  const { ticker, newsTitles, newsSources, factSheet } = input;
+  const { ticker, newsTitles, newsSources, articleContents, factSheet, fundamentals } = input;
 
   const newsBlock = newsTitles
-    .map((t, i) => `${i + 1}. ${t}（来源：${newsSources[i] ?? "未知"}）`)
-    .join("\n");
+    .map((t, i) => {
+      const content = articleContents?.[i] || "";
+      const snippet = content.length > 600 ? content.slice(0, 600) + "…" : content;
+      return `${i + 1}. 《${t}》
+   来源：${newsSources[i] ?? "未知"}
+   原文：${snippet || "(无法获取原文)"}`;
+    })
+    .join("\n\n");
+
+  // Fundamentals block
+  let fundamentalsBlock = "";
+  if (fundamentals && Object.keys(fundamentals).length > 0) {
+    const f = fundamentals;
+    fundamentalsBlock = `
+【${ticker} 基本面快照】
+${f.price ? `  最新股价：${f.price}` : ""}
+${f.pe ? `  PE 估值：${f.pe}` : ""}
+${f.marketCap ? `  市值：${f.marketCap}` : ""}
+${f.range52w ? `  52周区间：${f.range52w}` : ""}
+${f.volume ? `  成交量：${f.volume}` : ""}
+（以上数据可引用到分析中）
+`;
+  }
 
   let factsBlock = "";
   if (factSheet && factSheet.facts.length > 0) {
@@ -99,40 +122,42 @@ export function buildSummaryPrompt(input: SummaryPromptInput): string {
 ${toFactLines(factSheet).map((l) => `  ${l}`).join("\n")}
 
 ⚠️ 以上事实数据是你生成分析时唯一可引用的数字来源。
-如果你需要的某个数据不在上面 → 写"未披露"，不要编造。
-`;
-  } else {
-    factsBlock = `
-【事实数据】
-（本次未提供结构化事实数据。你只能基于新闻标题进行定性总结，
-不得生成任何具体的财务数字、估值数据或增长率。）
 `;
   }
 
-  return `你是一位华尔街资深投资分析师，拥有 20 年以上的金融市场经验。
+  return `你是华尔街对冲基金的分析师，以犀利敢言著称。你的分析从不泛泛而谈。
 
-请基于以下与 ${ticker} 相关的新闻标题及来源，进行专业的投资分析：
+请基于以下 ${ticker} 的新闻原文+基本面，写一份简短犀利的分析：
 
-【新闻数据】
+${fundamentalsBlock}
+【新闻原文】
 ${newsBlock}
 
 ${factsBlock}
 
+【强制要求 — 不要写流水账】
+- 从新闻中找到最反直觉、最让人意外的角度来写
+- 如果有基本面数据，结合它分析估值/价格合理性
+- 禁止使用模板化表述："分岔路口"、"多空交织"、"分化加剧"
+- 每一条 keyPoints 必须是"具体事实 + 投资影响"
+- 找到与其他股票/板块的对比点，制造冲突感
+
 ${ANTI_HALLUCINATION_RULES}
 
-请严格以 JSON 格式输出，不要包含任何 Markdown 标记、代码块符号或额外说明文字。输出必须是一个合法的 JSON 对象，包含以下字段：
+输出严格 JSON：
+{
+  "title": "字符串，不超过12个中文，从新闻中提炼最核心的一句话，禁止用'市场xxx'这类模糊标题",
+  "hook": "字符串，不超过30字，这条新闻最让人意外的点，用于社交媒体开头抓眼球",
+  "sentiment": "利好/利空/中性",
+  "keyPoints": ["具体事件+影响（30字内）", "具体事件+影响", "具体事件+影响"],
+  "risks": ["具体风险（30字内）", ...],
+  "updatedAt": "ISO 8601"
+}
 
-1. title: 字符串，给这份分析一个简短的标题，不超过 15 个中文字符。
-2. sentiment: 字符串，市场综合情绪，只能是 "利好"、"利空" 或 "中性" 之一。
-3. keyPoints: 字符串数组，固定 3 条最核心的投资要点提炼，每条不超过 30 个中文字符。
-   - 每条 keyPoint 必须能在新闻或事实数据中找到直接依据。
-   - 如果某条要点涉及数字，数字必须来自上方的事实数据区域。
-4. risks: 字符串数组，提炼 1-3 条潜在风险或利空因素。每条不超过 30 个中文字符。
-   - 风险可以从专业角度推断，但不能引用未在事实中出现的具体数字。
-5. updatedAt: 字符串，当前 UTC 时间，格式为 ISO 8601。
-
-示例输出格式：
-{"title":"科技股回暖信号","sentiment":"利好","keyPoints":["新产品发布超预期","机构普遍上调目标价","短期面临技术性回调压力"],"risks":["估值偏高存在回调风险","宏观经济不确定性仍在"],"updatedAt":"${new Date().toISOString()}"}`;
+反例（禁止产生这种垃圾）：
+❌ title: "市场分化加剧" → 太模糊，改成 "苹果买入信号出现"
+❌ keyPoints: "自动驾驶股票受关注" → 关注什么？改成 "机构推荐买入特斯拉替代股"
+❌ risks: "市场情绪可能过度乐观" → 哪来的情绪？改成 "Joby Aviation 单月跌25%的同板块风险"`;
 }
 
 /**
