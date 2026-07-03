@@ -87,13 +87,20 @@ function calcTitleFont(title, maxWidth, maxSize) {
 // ═══════════════════════════════════════════════════════════════
 // P1 — 冲突型封面
 // ═══════════════════════════════════════════════════════════════
-function buildP1(data) {
+function buildP1(data, photoUrl) {
   const fsTitle = calcTitleFont(data.title, 943, 88);
   const fsSub = calcTitleFont(data.subLine, 943, 69);
   const trackingHtml = data.trackingItems.map(t => `<span class="track-chip">${esc(t)}</span>`).join("");
+  const photoHtml = photoUrl ? `<img class="person-img" src="${esc(photoUrl)}" />` : "";
 
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><style>
 ${cssBase()}
+
+/* ── 人物 — 右侧半身像 ── */
+.person-layer{position:absolute;right:0;top:0;width:400px;height:1660px;z-index:1;pointer-events:none;overflow:hidden}
+.person-img{position:absolute;right:-20px;top:100px;width:400px;height:auto;opacity:0.50;filter:grayscale(20%) brightness(1.05) contrast(1.1)}
+.person-glow{position:absolute;right:0;top:40px;width:400px;height:600px;background:radial-gradient(ellipse at 38% 32%,${ACCENT}1a 0%,transparent 65%);pointer-events:none;z-index:0;filter:blur(50px)}
+.person-gradient{position:absolute;left:0;top:0;width:320px;height:100%;background:linear-gradient(to left,transparent 0%,#080c12 100%);z-index:2}
 
 /* ── 主内容 ── */
 .p1-main{position:relative;z-index:3;display:flex;flex-direction:column;height:100%;padding:160px 74px 140px}
@@ -144,6 +151,12 @@ ${cssBase()}
 
 </style></head><body>
 <div class="bg-grid"></div><div class="bg-glow"></div>
+
+<div class="person-layer">
+  <div class="person-glow"></div>
+  ${photoHtml}
+  <div class="person-gradient"></div>
+</div>
 
 <div class="p1-main">
   <div class="p1-top-row">
@@ -318,8 +331,16 @@ ${cssBase()}
   const OUT_DIR = path.join(process.cwd(), "covers", "MSFT_20260615");
   await fs.ensureDir(OUT_DIR);
 
+  // Satya Nadella photo
+  const localPhoto = path.join(process.cwd(), "covers", "msft.jpg");
+  let photoUrl = null;
+  if (fs.existsSync(localPhoto)) {
+    const b64 = fs.readFileSync(localPhoto).toString("base64");
+    photoUrl = "data:image/jpeg;base64," + b64;
+  }
+
   const slides = {
-    p1: { html: buildP1(MSFT) },
+    p1: { html: buildP1(MSFT, photoUrl) },
     p2: { html: buildP2(MSFT) },
     p3: { html: buildP3(MSFT) },
     p4: { html: buildP4(MSFT) },
